@@ -19,22 +19,27 @@ public:
         this->declare_parameter("rtsp_url",         "rtsp://192.168.1.102:8554/cam1");
         this->declare_parameter("stop_engine_path", "/home/aavjetson/Desktop/aav_ros2_ws/Camera/model/best.engine");
         this->declare_parameter("tl_engine_path",   "/home/aavjetson/Desktop/aav_ros2_ws/Camera/model/traffic_lights.engine");
+        this->declare_parameter("pedestrian_engine_path", "/home/aavjetson/Desktop/aav_ros2_ws/Camera/model/pedestrian.engine");
         this->declare_parameter("conf_thresh",      0.5);
         this->declare_parameter("tl_conf_thresh",   0.50);
+        this->declare_parameter("pedestrian_conf_thresh", 0.5);
         this->declare_parameter("show_window",      false);
 
         auto camera_name  = this->get_parameter("camera_name").as_string();
         auto rtsp_url     = this->get_parameter("rtsp_url").as_string();
         auto stop_engine  = this->get_parameter("stop_engine_path").as_string();
         auto tl_engine    = this->get_parameter("tl_engine_path").as_string();
+        auto pedestrian_engine = this->get_parameter("pedestrian_engine_path").as_string();
         float conf        = (float)this->get_parameter("conf_thresh").as_double();
         float tl_conf     = (float)this->get_parameter("tl_conf_thresh").as_double();
+        float pedestrian_conf = (float)this->get_parameter("pedestrian_conf_thresh").as_double();
         show_window_      = this->get_parameter("show_window").as_bool();
         camera_name_      = camera_name;
 
         decoder_   = std::make_unique<camera_decode::NvDecDecoder>(rtsp_url);
         yolo_stop_ = std::make_unique<YoloDetector>(stop_engine, conf);
         yolo_tl_   = std::make_unique<YoloDetector>(tl_engine, tl_conf);
+        yolo_pedestrian_ = std::make_unique<YoloDetector>(pedestrian_engine, pedestrian_conf);
 
         // Stop sign publishers
         stop_bool_pub_ = this->create_publisher<std_msgs::msg::Bool>(
@@ -52,6 +57,14 @@ public:
         tl_bbox_pub_ = this->create_publisher<vision_msgs::msg::Detection2DArray>(
             "/aav/" + camera_name_ + "/traffic_light_detections", 10);
 
+        // Pedestrian publishers
+        pedestrian_bool_pub_ = this->create_publisher<std_msgs::msg::Bool>(
+            "/aav/" + camera_name_ + "/pedestrian_detected", 10);
+        pedestrian_conf_pub_ = this->create_publisher<std_msgs::msg::Float32>(
+            "/aav/" + camera_name_ + "/pedestrian_confidence", 10);
+        pedestrian_bbox_pub_ = this->create_publisher<vision_msgs::msg::Detection2DArray>(
+            "/aav/" + camera_name_ + "/pedestrian_detections", 10);
+        
         // ── Thread 1: Decoder — always overwrites latest frame (Fix 3) ──
         decoder_thread_ = std::thread([this]() {
             while (running_) {
@@ -77,11 +90,12 @@ public:
                 // Both share the same GPU so parallel threads won't help
                 auto stop_dets = yolo_stop_->detect(f);
                 auto tl_dets   = yolo_tl_->detect(f);
-
+                auto pedestrian_dets = yolo_pedestrian_->detect(f);
                 {
                     std::lock_guard<std::mutex> lock(det_mtx_);
                     latest_stop_dets_ = stop_dets;
                     latest_tl_dets_   = tl_dets;
+                    latest_pedestrian_dets_ = pedestrian_dets;
                     infer_frame_      = f;  // frame that detections correspond to
                 }
             }
@@ -92,7 +106,7 @@ public:
             std::chrono::milliseconds(33),
             [this]() { timerCallback(); });
 
-        RCLCPP_INFO(this->get_logger(), "Stop sign + traffic light node ready (window=%s)",
+        RCLCPP_INFO(this->get_logger(), "Yolo Detector (window=%s)",
                     show_window_ ? "ON" : "OFF");
     }
 
@@ -166,7 +180,7 @@ private:
 
     void timerCallback() {
         cv::Mat frame;
-        std::vector<Detection> stop_dets, tl_dets;
+        std::vector<Detection> stop_dets, tl_dets, pedestrian_dets;
 
         // Grab latest inferred frame + detections — non-blocking
         {
@@ -175,6 +189,7 @@ private:
             frame     = infer_frame_.clone();
             stop_dets = latest_stop_dets_;
             tl_dets   = latest_tl_dets_;
+            pedestrian_dets = latest_pedestrian_dets_;
         }
 
         publishDetections(frame, stop_dets, "stop_sign",     {0, 0, 255},
@@ -183,9 +198,12 @@ private:
         publishDetections(frame, tl_dets,   "traffic_light", {0, 255, 0},
                           tl_bool_pub_,   tl_conf_pub_,   tl_bbox_pub_);
 
+        publishDetections(frame, pedestrian_dets, "pedestrian", {255, 0, 0},
+                          pedestrian_bool_pub_, pedestrian_conf_pub_, pedestrian_bbox_pub_);
+        
         // ── Display ───────────────────────────────────────────
         if (show_window_) {
-            cv::imshow("Stop Sign + Traffic Light Detector", frame);
+            cv::imshow("Yolo Detector", frame);
             if (cv::waitKey(1) == 'q') rclcpp::shutdown();
         }
     }
@@ -194,7 +212,7 @@ private:
     std::unique_ptr<camera_decode::NvDecDecoder> decoder_;
     std::unique_ptr<YoloDetector>                yolo_stop_;
     std::unique_ptr<YoloDetector>                yolo_tl_;
-
+    std::unique_ptr<YoloDetector>                yolo_pedestrian_;
     // Publishers — stop sign
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                stop_bool_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr             stop_conf_pub_;
@@ -204,6 +222,11 @@ private:
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                tl_bool_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr             tl_conf_pub_;
     rclcpp::Publisher<vision_msgs::msg::Detection2DArray>::SharedPtr tl_bbox_pub_;
+
+    // Publishers — pedestrian
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                pedestrian_bool_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr             pedestrian_conf_pub_;
+    rclcpp::Publisher<vision_msgs::msg::Detection2DArray>::SharedPtr pedestrian_bbox_pub_;
 
     rclcpp::TimerBase::SharedPtr timer_;
 
@@ -218,7 +241,7 @@ private:
     cv::Mat                infer_frame_;
     std::vector<Detection> latest_stop_dets_;
     std::vector<Detection> latest_tl_dets_;
-
+    std::vector<Detection> latest_pedestrian_dets_;
     std::atomic<bool> running_;
     bool show_window_ = false;
 };
