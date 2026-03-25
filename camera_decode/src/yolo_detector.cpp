@@ -16,6 +16,8 @@ YoloDetector::YoloDetector(const std::string& engine_path, float conf_thresh)
     engine_  = runtime_->deserializeCudaEngine(data.data(), sz);
     context_ = engine_->createExecutionContext();
 
+    cudaStreamCreate(&stream_);
+
     cudaMalloc(&gpu_buf_[0], 3 * INPUT_SIZE * INPUT_SIZE * sizeof(float));
     cudaMalloc(&gpu_buf_[1], OUTPUT_VALS * NUM_DETS * sizeof(float));
     input_host_  = new float[3 * INPUT_SIZE * INPUT_SIZE];
@@ -23,6 +25,7 @@ YoloDetector::YoloDetector(const std::string& engine_path, float conf_thresh)
 }
 
 YoloDetector::~YoloDetector() {
+    cudaStreamDestroy(stream_);
     cudaFree(gpu_buf_[0]);
     cudaFree(gpu_buf_[1]);
     delete[] input_host_;
@@ -44,13 +47,17 @@ void YoloDetector::preprocess(const cv::Mat& frame) {
     for (int c = 0; c < 3; ++c)
         memcpy(input_host_ + c * plane, ch[c].data, plane * sizeof(float));
 
-    cudaMemcpy(gpu_buf_[0], input_host_,
-               3 * plane * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(gpu_buf_[0], input_host_,
+                    3 * plane * sizeof(float),
+                    cudaMemcpyHostToDevice, stream_);
 }
 
 std::vector<Detection> YoloDetector::postprocess(int orig_w, int orig_h) {
-    cudaMemcpy(output_host_, gpu_buf_[1],
-               OUTPUT_VALS * NUM_DETS * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(output_host_, gpu_buf_[1],
+                    OUTPUT_VALS * NUM_DETS * sizeof(float),
+                    cudaMemcpyDeviceToHost, stream_);
+
+    cudaStreamSynchronize(stream_);
 
     float sx = (float)orig_w / INPUT_SIZE;
     float sy = (float)orig_h / INPUT_SIZE;
@@ -89,6 +96,10 @@ std::vector<Detection> YoloDetector::postprocess(int orig_w, int orig_h) {
 
 std::vector<Detection> YoloDetector::detect(const cv::Mat& frame) {
     preprocess(frame);
-    context_->executeV2(gpu_buf_);
+
+    context_->setTensorAddress("images",  gpu_buf_[0]);
+    context_->setTensorAddress("output0", gpu_buf_[1]);
+
+    context_->enqueueV3(stream_);
     return postprocess(frame.cols, frame.rows);
 }

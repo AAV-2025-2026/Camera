@@ -19,8 +19,10 @@ stop_sign_node1:
   ros__parameters:
     camera_name: "cam1"
     rtsp_url: "rtsp://192.168.1.102:8554/cam1"
-    engine_path: "/home/aavjetson/Desktop/aav/Camera/model/best.engine"
-    conf_thresh: 0.85
+    stop_engine_path: "/home/aavjetson/Desktop/aav_ros2_ws/Camera/model/best.engine"
+    tl_engine_path:   "/home/aavjetson/Desktop/aav_ros2_ws/Camera/model/traffic_lights.engine"
+    conf_thresh: 0.9
+    tl_conf_thresh: 0.40
     show_window: false
 
 # Stop Sign Detection Node 2 Configuration
@@ -28,6 +30,8 @@ stop_sign_node2:
   ros__parameters:
     camera_name: "cam2"
     rtsp_url: "rtsp://192.168.1.102:8554/cam2"
-    engine_path: "/home/aavjetson/Desktop/aav/Camera/model/best.engine"
-    conf_thresh: 0.85
+    stop_engine_path: "/home/aavjetson/Desktop/aav_ros2_ws/Camera/model/best.engine"
+    tl_engine_path:   "/home/aavjetson/Desktop/aav_ros2_ws/Camera/model/traffic_lights.engine"
+    conf_thresh: 0.9
+    tl_conf_thresh: 0.40
     show_window: false

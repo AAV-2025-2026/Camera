@@ -28,6 +28,7 @@ private:
     void preprocess(const cv::Mat& frame);
     std::vector<Detection> postprocess(int orig_w, int orig_h);
 
+    cudaStream_t stream_;
     TRTLogger logger_;
     nvinfer1::IRuntime*          runtime_  = nullptr;
     nvinfer1::ICudaEngine*       engine_   = nullptr;
